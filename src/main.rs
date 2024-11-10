@@ -200,7 +200,7 @@ fn most_characters_said_in_a_day(dms: &DirectMessages) -> Result<()> {
 fn call_start_time_of_day_graph(dms: &DirectMessages) -> Result<()> {
     println!("\n# Call Start Time of Day Graph (min = 15s, 15m groupings)");
 
-    let mut graph = Graph::<{ 24 * 4 }, _, usize, _>::new(dms.channel.authors.clone(), 5 * 4 + 2, |idx| format!("{hours:02}h{minutes:02}m", hours = idx / 4, minutes = (idx % 4) * 15), dataset_sum, 50);
+    let mut graph = Graph::<{ 24 * 4 }, usize, _>::new(dms.channel.authors.clone(), 5 * 4 + 2, |idx| format!("{hours:02}h{minutes:02}m", hours = idx / 4, minutes = (idx % 4) * 15), dataset_sum, 50);
 
     for call in dms.messages.iter().filter_map(Message::as_call).filter(|call | call.duration() >= 15_000) {
         let datetime = DateTime::<Utc>::from_timestamp_millis(call.start_timestamp as i64).context("Could not parse timestamp")?.with_timezone(&Local).naive_local();
@@ -217,7 +217,7 @@ fn call_start_time_of_day_graph(dms: &DirectMessages) -> Result<()> {
 fn text_time_of_day_graph(dms: &DirectMessages) -> Result<()> {
     println!("\n# Text Time of Day Graph (10m groupings)");
 
-    let mut graph = Graph::<'_, { 24 * 6 }, _, usize, _>::new(dms.channel.authors.clone(), 5 * 6 + 3, |idx| format!("{hours:02}h{minutes:02}m", hours = idx / 6, minutes = (idx % 6) * 10), dataset_sum, 50);
+    let mut graph = Graph::<'_, { 24 * 6 }, usize, _>::new(dms.channel.authors.clone(), 5 * 6 + 3, |idx| format!("{hours:02}h{minutes:02}m", hours = idx / 6, minutes = (idx % 6) * 10), dataset_sum, 50);
 
     for text in dms.messages.iter().filter_map(Message::as_text_message) {
         let datetime = DateTime::<Utc>::from_timestamp_millis(text.timestamp as i64).context("Could not parse timestamp")?.with_timezone(&Local).naive_local();
@@ -234,7 +234,7 @@ fn text_time_of_day_graph(dms: &DirectMessages) -> Result<()> {
 fn call_duration_by_week_graph(dms: &DirectMessages) -> Result<()> {
     println!("\n# Call Duration by Month Graph (min = 15s)");
 
-    let mut graph = Graph::<'_, 12, _, TimeQuantity, _>::new(vec![dms.channel.name.as_str()], 0, |idx| format!("{month}", month = NaiveDate::from_ymd_opt(1, (idx + 1) as u32, 1).expect("Valid date").format("%h")), dataset_average, 50);
+    let mut graph = Graph::<'_, 12, TimeQuantity, _>::new(vec![dms.channel.name.as_str()], 0, |idx| format!("{month}", month = NaiveDate::from_ymd_opt(1, (idx + 1) as u32, 1).expect("Valid date").format("%h")), dataset_average, 50);
 
     for call in dms.messages.iter().filter_map(Message::as_call).filter(|call| call.duration() >= 15_000) {
         let datetime = DateTime::<Utc>::from_timestamp_millis(call.start_timestamp as i64).context("Could not parse timestamp")?.with_timezone(&Local).naive_local();
@@ -251,7 +251,7 @@ fn call_duration_by_week_graph(dms: &DirectMessages) -> Result<()> {
 fn call_duration_by_day_of_week_graph(dms: &DirectMessages) -> Result<()> {
     println!("\n# Call Duration by Day of Week Graph (min = 15s)");
 
-    let mut graph = Graph::<'_, 7, _, TimeQuantity, _>::new(vec![dms.channel.name.as_str()], 0, |idx| Weekday::from_usize(idx).unwrap().to_string(), dataset_average, 50);
+    let mut graph = Graph::<'_, 7, TimeQuantity, _>::new(vec![dms.channel.name.as_str()], 0, |idx| Weekday::from_usize(idx).unwrap().to_string(), dataset_average, 50);
 
     for call in dms.messages.iter().filter_map(Message::as_call).filter(|call| call.duration() >= 15_000) {
         let datetime = DateTime::<Utc>::from_timestamp_millis(call.start_timestamp as i64).context("Could not parse timestamp")?.with_timezone(&Local).naive_local();
@@ -268,7 +268,7 @@ fn call_duration_by_day_of_week_graph(dms: &DirectMessages) -> Result<()> {
 fn call_graph(dms: &DirectMessages) -> Result<()> {
     println!("\n# Call Graph (10m groupings, min = 15s)");
 
-    let mut graph = Graph::<'_, { 24 * 6 }, _, TimeQuantity, _>::new(dms.channel.authors.clone(), 5 * 6 + 3, |idx| format!("{hours:02}h{minutes:02}m", hours = idx / 6, minutes = (idx % 6) * 10), dataset_sum, 50);
+    let mut graph = Graph::<'_, { 24 * 6 }, TimeQuantity, _>::new(dms.channel.authors.clone(), 5 * 6 + 3, |idx| format!("{hours:02}h{minutes:02}m", hours = idx / 6, minutes = (idx % 6) * 10), dataset_sum, 50);
 
     for call in dms.messages.iter().filter_map(Message::as_call).filter(|call| call.duration() >= 15_000) {
         let start_time = DateTime::<Utc>::from_timestamp_millis(call.start_timestamp as i64).context("Could not parse timestamp")?.with_timezone(&Local).naive_local();

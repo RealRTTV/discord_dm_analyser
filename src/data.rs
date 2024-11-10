@@ -1,6 +1,5 @@
 use std::fmt::{Debug, Display, Formatter};
 use std::iter::Sum;
-use std::marker::PhantomData;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign};
 use crate::generate_progress_bar;
 
@@ -130,18 +129,17 @@ impl Debug for TimeQuantity {
     }
 }
 
-pub struct Graph<'a, const SIZE: usize, F: Fn(usize) -> String, T: From<usize>, S: Fn(&[T]) -> usize> where [(); SIZE - 1]: {
+pub struct Graph<'a, const SIZE: usize, T: From<usize>, S: Fn(&[T]) -> usize> where [(); SIZE - 1]: {
     labels: [String; SIZE],
     authors: Box<[&'a str]>,
     data: [Box<[Vec<T>]>; SIZE],
     start_idx: usize,
     width: usize,
     sum: S,
-    _marker: PhantomData<T>,
 }
 
-impl<'a, const SIZE: usize, F: Fn(usize) -> String, T: From<usize>, S: Fn(&[T]) -> usize> Graph<'a, SIZE, F, T, S> where [(); SIZE - 1]: {
-    pub fn new(authors: impl Into<Box<[&'a str]>>, start_idx: usize, label: F, sum: S, width: usize) -> Self {
+impl<'a, const SIZE: usize, T: From<usize>, S: Fn(&[T]) -> usize> Graph<'a, SIZE, T, S> where [(); SIZE - 1]: {
+    pub fn new<F: Fn(usize) -> String>(authors: impl Into<Box<[&'a str]>>, start_idx: usize, label: F, sum: S, width: usize) -> Self {
         let authors = authors.into();
         Self {
             labels: std::array::from_fn(label),
@@ -150,7 +148,6 @@ impl<'a, const SIZE: usize, F: Fn(usize) -> String, T: From<usize>, S: Fn(&[T]) 
             authors,
             width,
             sum,
-            _marker: PhantomData,
         }
     }
 
@@ -162,7 +159,7 @@ impl<'a, const SIZE: usize, F: Fn(usize) -> String, T: From<usize>, S: Fn(&[T]) 
     }
 }
 
-impl<const SIZE: usize, F: Fn(usize) -> String, T: From<usize>, S: Fn(&[T]) -> usize> Display for Graph<'_, SIZE, F, T, S> where [(); SIZE - 1]: {
+impl<const SIZE: usize, T: From<usize>, S: Fn(&[T]) -> usize> Display for Graph<'_, SIZE, T, S> where [(); SIZE - 1]: {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         const FULL_CHAR: char = '#';
         const EMPTY_CHAR: char = '-';

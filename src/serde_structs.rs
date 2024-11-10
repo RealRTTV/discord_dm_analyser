@@ -1,4 +1,3 @@
-use std::num::Add;
 use chrono::{DateTime, FixedOffset};
 use itertools::Itertools;
 use serde::de::Error;
@@ -47,11 +46,13 @@ pub struct DirectMessages {
 impl DirectMessages {
     fn init(&mut self) -> anyhow::Result<()> {
         self.channel.authors = self.messages.iter().filter_map(|message| match message {
-            Message::TextMessage(text) => Some(&text.author.name),
-            Message::Call(call) => Some(&call.author.name),
-            Message::PinnedMessage(pin) => Some(&pin.author.name),
+            Message::TextMessage(text) => Some(&text.author),
+            Message::Call(call) => Some(&call.author),
+            Message::PinnedMessage(pin) => Some(&pin.author),
+            Message::AddRecipient(add) => Some(&add.author),
+            Message::RemoveRecipient(remove) => Some(&remove.author),
             Message::Misc(_) => None
-        }).unique().map(|s| s.as_str()).collect::<Vec<_>>();
+        }).unique().map(|author| author.0.name.as_str()).collect::<Vec<_>>();
 
         Ok(())
     }
@@ -157,6 +158,7 @@ impl TextMessage {
     }
 }
 
+#[derive(Eq, PartialEq, Hash)]
 pub struct AuthorReference(&'static Author);
 
 impl<'de> Deserialize<'de> for AuthorReference {
@@ -194,6 +196,7 @@ impl Deref for AuthorReference {
     }
 }
 
+#[derive(Eq, PartialEq, Hash)]
 pub struct Author {
     pub id: u64,
     pub nickname: String,
