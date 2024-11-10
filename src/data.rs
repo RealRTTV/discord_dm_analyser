@@ -130,26 +130,24 @@ impl Debug for TimeQuantity {
     }
 }
 
-pub struct GraphData<const SIZE: usize, F: Fn(usize) -> String, T: From<usize>, S: Fn(&[T]) -> usize> where [(); SIZE - 1]: {
+pub struct Graph<'a, const SIZE: usize, F: Fn(usize) -> String, T: From<usize>, S: Fn(&[T]) -> usize> where [(); SIZE - 1]: {
     labels: [String; SIZE],
-    authors: Box<[String]>,
+    authors: Box<[&'a str]>,
     data: [Box<[Vec<T>]>; SIZE],
     start_idx: usize,
     width: usize,
-    label: F,
     sum: S,
     _marker: PhantomData<T>,
 }
 
-impl<const SIZE: usize, F: Fn(usize) -> String, T: From<usize>, S: Fn(&[T]) -> usize> GraphData<SIZE, F, T, S> where [(); SIZE - 1]: {
-    pub fn new(authors: impl Into<Box<[String]>>, start_idx: usize, label: F, sum: S, width: usize) -> Self {
+impl<'a, const SIZE: usize, F: Fn(usize) -> String, T: From<usize>, S: Fn(&[T]) -> usize> Graph<'a, SIZE, F, T, S> where [(); SIZE - 1]: {
+    pub fn new(authors: impl Into<Box<[&'a str]>>, start_idx: usize, label: F, sum: S, width: usize) -> Self {
         let authors = authors.into();
         Self {
-            labels: std::array::from_fn(|_| String::new()),
+            labels: std::array::from_fn(label),
             data: std::array::from_fn(|_| Box::<[Vec<T>]>::from_iter(std::iter::from_fn(|| Some(Vec::new())).take(authors.len()))),
             start_idx,
             authors,
-            label,
             width,
             sum,
             _marker: PhantomData,
@@ -164,10 +162,10 @@ impl<const SIZE: usize, F: Fn(usize) -> String, T: From<usize>, S: Fn(&[T]) -> u
     }
 }
 
-impl<const SIZE: usize, F: Fn(usize) -> String, T: From<usize>, S: Fn(&[T]) -> usize> Display for GraphData<SIZE, F, T, S> where [(); SIZE - 1]: {
+impl<const SIZE: usize, F: Fn(usize) -> String, T: From<usize>, S: Fn(&[T]) -> usize> Display for Graph<'_, SIZE, F, T, S> where [(); SIZE - 1]: {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        const FULL_CHAR: char = '█';
-        const EMPTY_CHAR: char = ' ';
+        const FULL_CHAR: char = '#';
+        const EMPTY_CHAR: char = '-';
 
         let max = self.data.iter().map(|line| line.iter().map(|u| (&self.sum)(&u)).sum::<usize>()).max().unwrap_or(0);
 
@@ -176,7 +174,7 @@ impl<const SIZE: usize, F: Fn(usize) -> String, T: From<usize>, S: Fn(&[T]) -> u
             writeln!(f, "\x1B[{color}m{author}\x1B[0m", color = 92 + idx % 5)?
         }
         for (idx, quantities) in (self.start_idx..self.data.len()).chain(0..self.start_idx).map(|idx| (idx, &self.data[idx])) {
-            writeln!(f, "{label} | {bar}", label = (&self.label)(idx), bar = generate_progress_bar(self.width, FULL_CHAR, EMPTY_CHAR, max, &quantities, |vec| (&self.sum)(&vec)))?;
+            writeln!(f, "{label} | {bar}", label = self.labels[idx], bar = generate_progress_bar(self.width, FULL_CHAR, EMPTY_CHAR, max, &quantities, |vec| (&self.sum)(&vec)))?;
         }
 
         Ok(())

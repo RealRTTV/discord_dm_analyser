@@ -3,6 +3,7 @@
 
 #![feature(build_hasher_default_const_new)]
 #![feature(generic_const_exprs)]
+#![feature(const_collections_with_hasher)]
 
 pub mod data;
 pub mod serde_structs;
@@ -10,12 +11,13 @@ pub mod serde_structs;
 use std::fmt::Write;
 use std::path::Path;
 use std::time::Instant;
-use chrono::{DateTime, Datelike, Local, NaiveDate, Timelike, Utc};
+use chrono::{DateTime, Datelike, Local, NaiveDate, Timelike, Utc, Weekday};
 use fxhash::FxHashMap;
 use itertools::Itertools;
 use num_format::{Locale, ToFormattedString};
 use anyhow::{Context, Result};
-use crate::data::{dataset_average, dataset_sum, GraphData, TimeQuantity};
+use num_traits::FromPrimitive;
+use crate::data::{dataset_average, dataset_sum, Graph, TimeQuantity};
 use crate::serde_structs::{Call, DirectMessages, Message, UninitDirectMessages};
 
 fn main() -> Result<()> {
@@ -43,9 +45,11 @@ fn parse_dms<P: AsRef<Path>>(path: P) -> Result<()> {
     most_said_words(&dms)?;
     words_and_characters_written(&dms)?;
     most_characters_said_in_a_day(&dms)?;
+
     call_start_time_of_day_graph(&dms)?;
     text_time_of_day_graph(&dms)?;
     call_duration_by_week_graph(&dms)?;
+    call_duration_by_day_of_week_graph(&dms)?;
     call_graph(&dms)?;
 
     Ok(())
@@ -196,7 +200,7 @@ fn most_characters_said_in_a_day(dms: &DirectMessages) -> Result<()> {
 fn call_start_time_of_day_graph(dms: &DirectMessages) -> Result<()> {
     println!("\n# Call Start Time of Day Graph (min = 15s, 15m groupings)");
 
-    let mut graph = GraphData::<{ 24 * 4 }, _, usize, _>::new(dms.channel.authors.clone(), 5 * 4 + 2, |idx| format!("{hours:02}h{minutes:02}m", hours = idx / 4, minutes = (idx % 4) * 15), dataset_sum, 50);
+    let mut graph = Graph::<{ 24 * 4 }, _, usize, _>::new(dms.channel.authors.clone(), 5 * 4 + 2, |idx| format!("{hours:02}h{minutes:02}m", hours = idx / 4, minutes = (idx % 4) * 15), dataset_sum, 50);
 
     for call in dms.messages.iter().filter_map(Message::as_call).filter(|call | call.duration() >= 15_000) {
         let datetime = DateTime::<Utc>::from_timestamp_millis(call.start_timestamp as i64).context("Could not parse timestamp")?.with_timezone(&Local).naive_local();
@@ -213,7 +217,7 @@ fn call_start_time_of_day_graph(dms: &DirectMessages) -> Result<()> {
 fn text_time_of_day_graph(dms: &DirectMessages) -> Result<()> {
     println!("\n# Text Time of Day Graph (10m groupings)");
 
-    let mut graph = GraphData::<{ 24 * 6 }, _, usize, _>::new(dms.channel.authors.clone(), 5 * 6 + 3, |idx| format!("{hours:02}h{minutes:02}m", hours = idx / 6, minutes = (idx % 6) * 10), dataset_sum, 50);
+    let mut graph = Graph::<'_, { 24 * 6 }, _, usize, _>::new(dms.channel.authors.clone(), 5 * 6 + 3, |idx| format!("{hours:02}h{minutes:02}m", hours = idx / 6, minutes = (idx % 6) * 10), dataset_sum, 50);
 
     for text in dms.messages.iter().filter_map(Message::as_text_message) {
         let datetime = DateTime::<Utc>::from_timestamp_millis(text.timestamp as i64).context("Could not parse timestamp")?.with_timezone(&Local).naive_local();
@@ -230,9 +234,9 @@ fn text_time_of_day_graph(dms: &DirectMessages) -> Result<()> {
 fn call_duration_by_week_graph(dms: &DirectMessages) -> Result<()> {
     println!("\n# Call Duration by Month Graph (min = 15s)");
 
-    let mut graph = GraphData::<12, _, TimeQuantity, _>::new(vec![dms.channel.name.clone()], 0, |idx| format!("{month}", month = NaiveDate::from_ymd_opt(1, (idx + 1) as u32, 1).expect("Valid date").format("%h")), dataset_average, 50);
+    let mut graph = Graph::<'_, 12, _, TimeQuantity, _>::new(vec![dms.channel.name.as_str()], 0, |idx| format!("{month}", month = NaiveDate::from_ymd_opt(1, (idx + 1) as u32, 1).expect("Valid date").format("%h")), dataset_average, 50);
 
-    for call in dms.messages.iter().filter_map(Message::as_call) {
+    for call in dms.messages.iter().filter_map(Message::as_call).filter(|call| call.duration() >= 15_000) {
         let datetime = DateTime::<Utc>::from_timestamp_millis(call.start_timestamp as i64).context("Could not parse timestamp")?.with_timezone(&Local).naive_local();
         let date = datetime.date();
         let index = date.month0() as usize;
@@ -244,12 +248,29 @@ fn call_duration_by_week_graph(dms: &DirectMessages) -> Result<()> {
     Ok(())
 }
 
+fn call_duration_by_day_of_week_graph(dms: &DirectMessages) -> Result<()> {
+    println!("\n# Call Duration by Day of Week Graph (min = 15s)");
+
+    let mut graph = Graph::<'_, 7, _, TimeQuantity, _>::new(vec![dms.channel.name.as_str()], 0, |idx| Weekday::from_usize(idx).unwrap().to_string(), dataset_average, 50);
+
+    for call in dms.messages.iter().filter_map(Message::as_call).filter(|call| call.duration() >= 15_000) {
+        let datetime = DateTime::<Utc>::from_timestamp_millis(call.start_timestamp as i64).context("Could not parse timestamp")?.with_timezone(&Local).naive_local();
+
+        let index = datetime.date().weekday() as usize;
+        graph.add(&dms.channel.name, index, TimeQuantity::from(call.duration() as usize));
+    }
+
+    println!("{graph}");
+
+    Ok(())
+}
+
 fn call_graph(dms: &DirectMessages) -> Result<()> {
-    println!("\n# Call Graph (10m groupings)");
+    println!("\n# Call Graph (10m groupings, min = 15s)");
 
-    let mut graph = GraphData::<{ 24 * 6 }, _, TimeQuantity, _>::new(dms.channel.authors.clone(), 5 * 6 + 3, |idx| format!("{hours:02}h{minutes:02}m", hours = idx / 6, minutes = (idx % 6) * 10), dataset_sum, 50);
+    let mut graph = Graph::<'_, { 24 * 6 }, _, TimeQuantity, _>::new(dms.channel.authors.clone(), 5 * 6 + 3, |idx| format!("{hours:02}h{minutes:02}m", hours = idx / 6, minutes = (idx % 6) * 10), dataset_sum, 50);
 
-    for call in dms.messages.iter().filter_map(Message::as_call) {
+    for call in dms.messages.iter().filter_map(Message::as_call).filter(|call| call.duration() >= 15_000) {
         let start_time = DateTime::<Utc>::from_timestamp_millis(call.start_timestamp as i64).context("Could not parse timestamp")?.with_timezone(&Local).naive_local();
         let start_time_start = start_time.with_minute(start_time.minute() / 10 * 10).unwrap().with_second(0).unwrap().with_nanosecond(0).unwrap();
         let mut index = (start_time.hour() * 6 + start_time.minute() / 10) as usize;
