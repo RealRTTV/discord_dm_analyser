@@ -9,6 +9,7 @@ pub mod data;
 pub mod serde_structs;
 
 use std::fmt::Write;
+use std::fs::File;
 use std::path::Path;
 use std::time::Instant;
 use chrono::{DateTime, Datelike, Local, NaiveDate, Timelike, Utc, Weekday};
@@ -16,13 +17,14 @@ use fxhash::FxHashMap;
 use itertools::Itertools;
 use num_format::{Locale, ToFormattedString};
 use anyhow::{Context, Result};
+use image::{ImageFormat, Pixel, Rgba};
 use num_traits::FromPrimitive;
 use crate::data::{dataset_average, dataset_sum, Graph, TimeQuantity};
 use crate::serde_structs::{Call, DirectMessages, Message, UninitDirectMessages};
 
 fn main() -> Result<()> {
     let Some(path) = std::env::args().nth(1) else {
-        println!("No path specified; usage: discord_dm_analyser <directory>");
+        println!("No path specified; usage: discord_dm_analyser <file>");
         std::process::exit(0);
     };
 
@@ -41,16 +43,16 @@ fn parse_dms<P: AsRef<Path>>(path: P) -> Result<()> {
 
     top_call_lengths(&dms)?;
     total_call_lengths(&dms)?;
-    longest_time_between_messages(&dms)?;
-    most_said_words(&dms)?;
-    words_and_characters_written(&dms)?;
-    most_characters_said_in_a_day(&dms)?;
-
-    call_start_time_of_day_graph(&dms)?;
-    text_time_of_day_graph(&dms)?;
-    call_duration_by_week_graph(&dms)?;
-    call_duration_by_day_of_week_graph(&dms)?;
-    call_graph(&dms)?;
+    // longest_time_between_messages(&dms)?;
+    // most_said_words(&dms)?;
+    // words_and_characters_written(&dms)?;
+    // most_characters_said_in_a_day(&dms)?;
+    // call_start_time_of_day_graph(&dms)?;
+    // text_time_of_day_graph(&dms)?;
+    // call_duration_by_week_graph(&dms)?;
+    // call_duration_by_day_of_week_graph(&dms)?;
+    // call_graph(&dms)?;
+    call_png(&dms)?;
 
     Ok(())
 }
@@ -290,6 +292,70 @@ fn call_graph(dms: &DirectMessages) -> Result<()> {
     }
 
     println!("{graph}");
+
+    Ok(())
+}
+
+fn call_png(dms: &DirectMessages) -> Result<()> {
+    const RED_CHANNEL: [u8; 3] = [0x98, 0xE5, 0x5E];
+    const GREEN_CHANNEL: [u8; 3] = [0xC3, 0xC0, 0xAC];
+    const BLUE_CHANNEL: [u8; 3] = [0x79, 0x7B, 0xEC];
+
+    println!("\n# Generating Call Graph Image (1m groupings)...");
+
+    println!("Collecting Raw Data...");
+
+    const NUM_QUANTITIES: usize = 24 * 60 * 4;
+    const QUANTITY_PER: usize = 1000 * 60 * 60 * 24 / NUM_QUANTITIES;
+    let mut quantities: [Vec<usize>; NUM_QUANTITIES] = std::array::from_fn(|_| vec![0_usize; dms.channel.authors.len()]);
+
+    for call in dms.messages.iter().filter_map(Message::as_call).filter(|call| call.duration() >= 15_000) {
+        let author_idx = dms.channel.authors.iter().position(|author| *author == call.author.name).unwrap();
+        let start_time = DateTime::<Utc>::from_timestamp_millis(call.start_timestamp as i64).context("Could not parse timestamp")?.with_timezone(&Local).naive_local();
+        let start_time_start = start_time.with_second(0).unwrap().with_nanosecond(0).unwrap();
+        let mut index = (((start_time.hour() * 60 + start_time.minute()) * 60 + start_time.second()) * 1000) as usize / QUANTITY_PER;
+        let end_time = DateTime::<Utc>::from_timestamp_millis(call.end_timestamp as i64).context("Could not parse timestamp")?.with_timezone(&Local).naive_local();
+        let end_time_start = end_time.with_second(0).unwrap().with_nanosecond(0).unwrap();
+        let head_duration = (start_time - start_time_start).num_milliseconds() as usize;
+        quantities[index][author_idx] += head_duration;
+        index = (index + 1) % NUM_QUANTITIES;
+        if start_time_start != end_time_start {
+            let mut remaining_millis = (call.duration() as usize).saturating_sub(head_duration);
+            while remaining_millis > 0 {
+                quantities[index][author_idx] += remaining_millis.min(QUANTITY_PER);
+                remaining_millis = remaining_millis.saturating_sub(QUANTITY_PER);
+                index = (index + 1) % NUM_QUANTITIES;
+            }
+        }
+    }
+
+    let (width, height) = (quantities.len(), (quantities.len() as f64 / (64.0 / 9.0)).ceil() as usize);
+    let max_ms = quantities.iter().map(|x| x.iter().copied().sum::<usize>() + 1).max().unwrap_or(0);
+    let ms_per_px = max_ms.div_ceil(height);
+    println!("Generating Base Image...");
+    let mut image = image::RgbaImage::from_pixel(width as u32, height as u32, Rgba([0x31, 0x33, 0x38, 0xFF]));
+    for x in 0..width {
+        print!("Generating bars ({x} / {width}) ({pct:.1}%)...\r", pct = 100.0 * x as f64 / width as f64);
+        std::io::Write::flush(&mut std::io::stdout())?;
+        let quantities_index = (x + 11 * NUM_QUANTITIES / 48) % width;
+        let section = &*quantities[quantities_index];
+        let heights = (0..section.len()).map(|idx| height - 1 - section.iter().copied().take(idx).map(|x| x / ms_per_px).sum::<usize>()).collect::<Vec<_>>();
+        for (idx, (mut remaining_quantity, mut y)) in section.iter().copied().zip(heights.into_iter()).enumerate().rev() {
+            while remaining_quantity > 0 {
+                image.get_pixel_mut(x as u32, y as u32).blend(&Rgba([RED_CHANNEL[idx % RED_CHANNEL.len()], GREEN_CHANNEL[idx % GREEN_CHANNEL.len()], BLUE_CHANNEL[idx % BLUE_CHANNEL.len()], (remaining_quantity.min(ms_per_px) * 0xFF / ms_per_px) as u8]));
+                remaining_quantity = remaining_quantity.saturating_sub(ms_per_px);
+                y = y.saturating_sub(1);
+            }
+        }
+    }
+
+    println!("Generating bars ({width} / {width}) (100.0%)...");
+    println!("Writing file...");
+
+    let mut file = File::create(format!("Call Graph - {channel_name} - {id}.png", channel_name = dms.channel.name, id = dms.channel.id))?;
+    image.write_to(&mut file, ImageFormat::Png)?;
+
+    println!("# Generated Call Graph Image");
 
     Ok(())
 }
