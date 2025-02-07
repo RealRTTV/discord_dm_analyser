@@ -6,9 +6,11 @@
 
 pub mod data;
 pub mod serde_structs;
+mod ffi;
 
 use crate::data::{dataset_average, dataset_sum, Graph, TimeQuantity};
 use crate::serde_structs::{Call, DirectMessages, Message, UninitDirectMessages};
+use crate::ffi::{set_color, set_cursor, stdout_str, get_char, get_console_screen_buffer_info};
 use anyhow::{Context, Result};
 use chrono::{Datelike, NaiveDate, TimeDelta, Timelike, Weekday};
 use fxhash::FxHashMap;
@@ -16,29 +18,11 @@ use image::{ImageFormat, Pixel, Rgba};
 use itertools::Itertools;
 use num_format::{Locale, ToFormattedString};
 use num_traits::FromPrimitive;
-use std::ffi::c_void;
 use std::fmt::Write;
 use std::fs::File;
 use std::path::Path;
-use std::ptr::null_mut;
 use std::time::Instant;
 
-#[link(name = "msvcrt")]
-unsafe extern "C" {
-    pub fn _getch() -> i32;
-}
-
-#[link(name = "kernel32")]
-unsafe extern "system" {
-    #[allow(improper_ctypes)]
-    pub fn SetConsoleCursorPosition(handle: *const c_void, pos: (i16, i16)) -> bool;
-
-    pub fn SetConsoleTextAttribute(handle: *const c_void, attribs: u16) -> bool;
-
-    pub fn WriteConsoleA(handle: *const c_void, ptr: *const c_void, len: u32, num_chars_written: *mut u32, reserved: *mut c_void) -> bool;
-
-    pub fn GetStdHandle(id: u32) -> *mut c_void;
-}
 
 fn main() -> Result<()> {
     let Some(path) = std::env::args().nth(1) else {
@@ -63,7 +47,7 @@ fn parse_dms<P: AsRef<Path>>(path: P) -> Result<()> {
         selection(&dms)?
     }
 
-    loop { if unsafe { _getch() } == 3 { return Ok(()) } }
+    loop { if get_char() == 3 { return Ok(()) } }
 }
 
 fn select_data_calculations() -> Vec<fn(&DirectMessages) -> Result<()>> {
@@ -78,14 +62,14 @@ fn select_data_calculations() -> Vec<fn(&DirectMessages) -> Result<()>> {
         use SelectionInput::*;
 
         loop {
-            let first_byte = unsafe { _getch() };
+            let first_byte = get_char();
             if first_byte == 3 {
                 std::process::exit(1);
             } else if first_byte == 13 {
                 // enter key
                 return Finish;
             } else if first_byte == 224 {
-                let second_byte = unsafe { _getch() };
+                let second_byte = get_char();
                 match second_byte {
                     72 => return Up,
                     77 | 75 => return Toggle,
@@ -98,12 +82,12 @@ fn select_data_calculations() -> Vec<fn(&DirectMessages) -> Result<()>> {
 
     fn display_line(name: &str, toggled: bool, selected: bool) {
         // < Top Call Lengths - DISABLED >
-        let plain_text_color = if selected { 0b_1111 } else { 0b_0111 };
+        let plain_text_color = if selected { 0b_11111000 } else { 0b_00000111 };
         let toggle_color = match (toggled, selected) {
-            (false, false) => 0b0100,
-            (false, true) => 0b1100,
-            (true, false) => 0b0010,
-            (true, true) => 0b1010,
+            (false, false) => 0b00000100,
+            (false, true) => 0b11111100,
+            (true, false) => 0b00000010,
+            (true, true) => 0b11111010,
         };
         set_color(plain_text_color);
         stdout_str("< ");
@@ -112,7 +96,9 @@ fn select_data_calculations() -> Vec<fn(&DirectMessages) -> Result<()>> {
         set_color(toggle_color);
         stdout_str(if toggled { "ENABLED" } else { "DISABLED" });
         set_color(plain_text_color);
-        stdout_str(" > ");
+        stdout_str(" >");
+        set_color(0b1111);
+        stdout_str(" ");
     }
 
     const SELECTIONS: &[(&'static str, fn(&DirectMessages) -> Result<()>)] = &[
@@ -133,7 +119,7 @@ fn select_data_calculations() -> Vec<fn(&DirectMessages) -> Result<()>> {
         ("Edited Rates (Annual Buckets)", edit_rates),
     ];
 
-    const LINES_ABOVE: usize = 2;
+    let lines_already_written = get_console_screen_buffer_info().cursor_pos.y as usize;
 
     let mut selected = [false; const { SELECTIONS.len() }];
     let mut selected_line = 0_usize;
@@ -144,7 +130,7 @@ fn select_data_calculations() -> Vec<fn(&DirectMessages) -> Result<()>> {
     }
 
     loop {
-        set_cursor(0, LINES_ABOVE + selected_line);
+        set_cursor(0, lines_already_written + selected_line);
         match read_valid_input() {
             SelectionInput::Finish => return (0..SELECTIONS.len()).filter(|&idx| selected[idx]).map(|idx| SELECTIONS[idx].1).collect::<Vec<_>>(),
             SelectionInput::Toggle => {
@@ -154,13 +140,13 @@ fn select_data_calculations() -> Vec<fn(&DirectMessages) -> Result<()>> {
             SelectionInput::Up => {
                 display_line(SELECTIONS[selected_line].0, selected[selected_line], false);
                 selected_line = (selected_line + SELECTIONS.len() - 1) % SELECTIONS.len();
-                set_cursor(0, LINES_ABOVE + selected_line);
+                set_cursor(0, lines_already_written + selected_line);
                 display_line(SELECTIONS[selected_line].0, selected[selected_line], true);
             },
             SelectionInput::Down => {
                 display_line(SELECTIONS[selected_line].0, selected[selected_line], false);
                 selected_line = (selected_line + 1) % SELECTIONS.len();
-                set_cursor(0, LINES_ABOVE + selected_line);
+                set_cursor(0, lines_already_written + selected_line);
                 display_line(SELECTIONS[selected_line].0, selected[selected_line], true);
             },
         }
@@ -197,18 +183,6 @@ pub fn nth(n: usize) -> String {
         }
     }
     buf
-}
-
-pub fn set_cursor(x: usize, y: usize) {
-    unsafe { SetConsoleCursorPosition(GetStdHandle(-11_i32 as u32), (x as i16, y as i16)); }
-}
-
-pub fn set_color(color: u16) {
-    unsafe { SetConsoleTextAttribute(GetStdHandle(-11_i32 as u32), color); }
-}
-
-pub fn stdout_str(str: &str) {
-    unsafe { WriteConsoleA(GetStdHandle(-11_i32 as u32), str.as_ptr().cast::<c_void>(), str.len() as u32, null_mut(), null_mut()); }
 }
 
 fn top_call_lengths(dms: &DirectMessages) -> Result<()> {
