@@ -1,6 +1,7 @@
 use std::fmt::{Debug, Display, Formatter};
 use std::iter::Sum;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign};
+use chrono::TimeDelta;
 use crate::generate_progress_bar;
 
 #[derive(Copy, Clone, Default)]
@@ -44,6 +45,12 @@ impl From<usize> for TimeQuantity {
             seconds,
             milliseconds,
         }
+    }
+}
+
+impl From<TimeDelta> for TimeQuantity {
+    fn from(value: TimeDelta) -> Self {
+        Self::from(value.num_milliseconds().max(0) as usize)
     }
 }
 

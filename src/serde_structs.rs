@@ -1,4 +1,4 @@
-use chrono::{DateTime, FixedOffset};
+use chrono::{DateTime, FixedOffset, Local, NaiveDateTime, TimeDelta};
 use itertools::Itertools;
 use serde::de::Error;
 use serde::{Deserialize, Deserializer};
@@ -8,11 +8,15 @@ use std::ops::Deref;
 use fxhash::{FxBuildHasher, FxHashMap};
 use parking_lot::RwLock;
 
-pub fn timestamp_from_spec<'de, D: Deserializer<'de>>(deserializer: D) -> anyhow::Result<u64, D::Error> {
+pub fn opt_timestamp_from_spec<'de, D: Deserializer<'de>>(deserializer: D) -> anyhow::Result<Option<NaiveDateTime>, D::Error> {
     Ok(match String::deserialize(deserializer) {
-        Ok(x) => x.parse::<DateTime<FixedOffset>>().map_err(|_| Error::custom("Could not parse timestamp"))?.timestamp_millis() as u64,
-        Err(_) => 0,
+        Ok(x) => Some(x.parse::<DateTime<FixedOffset>>().map_err(|_| Error::custom("Could not parse timestamp"))?.with_timezone(&Local).naive_local()),
+        Err(_) => None,
     })
+}
+
+pub fn timestamp_from_spec<'de, D: Deserializer<'de>>(deserializer: D) -> anyhow::Result<NaiveDateTime, D::Error> {
+    opt_timestamp_from_spec(deserializer).map(|x| x.unwrap_or(NaiveDateTime::MIN))
 }
 
 #[derive(Deserialize)]
@@ -80,7 +84,7 @@ pub enum Message {
     AddRecipient(AddRecipient),
     #[serde(rename = "RecipientRemove")]
     RemoveRecipient(RemoveRecipient),
-    #[serde(rename = "35", alias = "20", alias = "ChannelIconChange")]
+    #[serde(rename = "35", alias = "20", alias = "23", alias = "ChannelIconChange")]
     Misc(Value),
 }
 
@@ -138,6 +142,39 @@ impl Message {
             None
         }
     }
+
+    #[inline]
+    pub fn timestamp(&self) -> Option<NaiveDateTime> {
+        Some(match self {
+            Message::TextMessage(text) => text.timestamp,
+            Message::Call(call) => call.start_timestamp,
+            Message::PinnedMessage(pin) => pin.timestamp,
+            Message::AddRecipient(add) => add.timestamp,
+            Message::RemoveRecipient(remove) => remove.timestamp,
+            Message::Misc(_) => return None
+        })
+    }
+
+    #[inline]
+    pub fn author(&self) -> Option<&Author> {
+        Some(match self {
+            Message::TextMessage(text) => &text.author,
+            Message::Call(call) => &call.author,
+            Message::PinnedMessage(pin) => &pin.author,
+            Message::AddRecipient(add) => &add.author,
+            Message::RemoveRecipient(remove) => &remove.author,
+            Message::Misc(_) => return None
+        })
+    }
+
+    #[inline]
+    pub fn id(&self) -> Option<u64> {
+        Some(match self {
+            Message::TextMessage(text) => text.id,
+            Message::Call(call) => call.id,
+            _ => return None
+        })
+    }
 }
 
 #[derive(Deserialize)]
@@ -147,7 +184,9 @@ pub struct TextMessage {
     pub content: String,
     pub author: AuthorReference,
     #[serde(deserialize_with = "timestamp_from_spec")]
-    pub timestamp: u64,
+    pub timestamp: NaiveDateTime,
+    #[serde(deserialize_with = "opt_timestamp_from_spec", rename = "timestampEdited")]
+    pub edited_timestamp: Option<NaiveDateTime>,
     pub attachments: Vec<Attachment>,
     pub reference: Option<Reference>,
 }
@@ -227,22 +266,22 @@ pub struct Call {
     #[serde(deserialize_with = "as_u64")]
     pub id: u64,
     #[serde(rename = "timestamp", deserialize_with = "timestamp_from_spec")]
-    pub start_timestamp: u64,
+    pub start_timestamp: NaiveDateTime,
     #[serde(rename = "callEndedTimestamp", deserialize_with = "timestamp_from_spec")]
-    pub end_timestamp: u64,
+    pub end_timestamp: NaiveDateTime,
     pub author: AuthorReference,
 }
 
 impl Call {
-    pub fn duration(&self) -> u64 {
-        self.end_timestamp.saturating_sub(self.start_timestamp)
+    pub fn duration(&self) -> TimeDelta {
+        (self.end_timestamp - self.start_timestamp).max(TimeDelta::zero())
     }
 }
 
 #[derive(Deserialize)]
 pub struct PinnedMessage {
     #[serde(deserialize_with = "timestamp_from_spec")]
-    pub timestamp: u64,
+    pub timestamp: NaiveDateTime,
     pub author: AuthorReference,
     reference: Reference,
 }
@@ -264,7 +303,7 @@ pub struct Reference {
 #[derive(Deserialize)]
 pub struct AddRecipient {
     #[serde(deserialize_with = "timestamp_from_spec")]
-    pub timestamp: u64,
+    pub timestamp: NaiveDateTime,
     pub author: AuthorReference,
     #[serde(rename = "mentions")]
     pub added: Vec<AuthorReference>,
@@ -273,7 +312,7 @@ pub struct AddRecipient {
 #[derive(Deserialize)]
 pub struct RemoveRecipient {
     #[serde(deserialize_with = "timestamp_from_spec")]
-    pub timestamp: u64,
+    pub timestamp: NaiveDateTime,
     pub author: AuthorReference,
     #[serde(rename = "mentions")]
     pub removed: Vec<AuthorReference>,
