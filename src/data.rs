@@ -3,7 +3,8 @@ use std::iter;
 use std::iter::Sum;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign};
 use chrono::TimeDelta;
-use crate::generate_progress_bar;
+use itertools::Itertools;
+use crate::{generate_progress_bar, standard_deviation};
 
 #[derive(Copy, Clone, Default)]
 pub struct TimeQuantity {
@@ -137,77 +138,27 @@ impl Debug for TimeQuantity {
     }
 }
 
-pub struct Graph<'a, const SIZE: usize, T: From<usize>, S: Fn(&[T]) -> usize> where [(); SIZE - 1]: {
-    labels: [String; SIZE],
-    authors: Box<[&'a str]>,
-    data: [Box<[Vec<T>]>; SIZE],
-    start_idx: usize,
-    width: usize,
-    sum: S,
-}
-
-impl<'a, const SIZE: usize, T: From<usize>, S: Fn(&[T]) -> usize> Graph<'a, SIZE, T, S> where [(); SIZE - 1]: {
-    pub fn new<F: Fn(usize) -> String>(authors: impl Into<Box<[&'a str]>>, start_idx: usize, label: F, sum: S, width: usize) -> Self {
-        let authors = authors.into();
-        Self {
-            labels: std::array::from_fn(label),
-            data: std::array::from_fn(|_| Box::<[Vec<T>]>::from_iter(std::iter::from_fn(|| Some(Vec::new())).take(authors.len()))),
-            start_idx,
-            authors,
-            width,
-            sum,
-        }
-    }
-
-    pub fn add(&mut self, author: &str, idx: usize, quantity: T) -> bool {
-        let Some(author_index) = self.authors.iter().position(|x| *x == author) else { return false };
-        let Some(line) = self.data.get_mut(idx) else { return false };
-        line[author_index].push(quantity);
-        true
-    }
-}
-
-impl<const SIZE: usize, T: From<usize>, S: Fn(&[T]) -> usize> Display for Graph<'_, SIZE, T, S> where [(); SIZE - 1]: {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        const FULL_CHAR: char = '#';
-        const EMPTY_CHAR: char = '-';
-
-        let max = self.data.iter().map(|line| line.iter().map(|u| (&self.sum)(&u)).sum::<usize>()).max().unwrap_or(0);
-
-        writeln!(f, "Legend:")?;
-        for (idx, author) in self.authors.iter().enumerate() {
-            writeln!(f, "\x1B[{color}m{author}\x1B[0m", color = 92 + idx % 5)?
-        }
-        writeln!(f, "{FULL_CHAR} [1x] = {}", (max + self.width / 2) / self.width)?;
-        for (idx, quantities) in (self.start_idx..self.data.len()).chain(0..self.start_idx).map(|idx| (idx, &self.data[idx])) {
-            writeln!(f, "{label} | {bar}", label = self.labels[idx], bar = generate_progress_bar(self.width, FULL_CHAR, EMPTY_CHAR, max, &quantities, |vec| (&self.sum)(&vec)))?;
-        }
-
-        Ok(())
-    }
-}
-
-pub struct VariableSizeGraph<'a, T: From<usize>, S: Fn(&[T]) -> usize, F: Fn(usize) -> String> {
-    label_fn: F,
+pub struct Graph<'a, T: From<usize>, S: Fn(&[T]) -> usize, F: Fn(usize) -> String> {
     labels: Vec<String>,
     authors: Box<[&'a str]>,
     data: Vec<Box<[Vec<T>]>>,
     start_idx: usize,
     width: usize,
     sum: S,
+    label_fn: F,
 }
 
-impl<'a, T: From<usize>, S: Fn(&[T]) -> usize, F: Fn(usize) -> String> VariableSizeGraph<'a, T, S, F> {
+impl<'a, T: From<usize>, S: Fn(&[T]) -> usize, F: Fn(usize) -> String> Graph<'a, T, S, F> {
     pub fn new(authors: impl Into<Box<[&'a str]>>, start_idx: usize, label_fn: F, sum: S, width: usize) -> Self {
         let authors = authors.into();
         Self {
-            label_fn,
             labels: Vec::new(),
             data: Vec::new(),
             start_idx,
             authors,
             width,
             sum,
+            label_fn,
         }
     }
 
@@ -228,18 +179,21 @@ impl<'a, T: From<usize>, S: Fn(&[T]) -> usize, F: Fn(usize) -> String> VariableS
     }
 }
 
-impl<'a, T: From<usize>, S: Fn(&[T]) -> usize, F: Fn(usize) -> String> Display for VariableSizeGraph<'a, T, S, F> {
+impl<T: From<usize>, S: Fn(&[T]) -> usize, F: Fn(usize) -> String> Display for Graph<'_, T, S, F> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         const FULL_CHAR: char = '#';
         const EMPTY_CHAR: char = '-';
 
-        let max = self.data.iter().map(|line| line.iter().map(|u| (&self.sum)(&u)).sum::<usize>()).max().unwrap_or(0);
+        let (min, max) = self.data.iter().map(|line| line.iter().map(|u| (&self.sum)(&u)).sum::<usize>()).minmax().into_option().unwrap_or((0, 0));
+        let sum = self.data.iter().map(|line| line.iter().map(|u| (&self.sum)(&u)).sum::<usize>()).sum::<usize>();
+        let mean = sum as f64 / self.data.len() as f64;
+        let sd = standard_deviation(sum, self.data.iter().map(|line| line.iter().map(|u| (&self.sum)(&u)).sum::<usize>()), self.data.len());
 
+        writeln!(f, "Graph Data: mean = {mean}, sd = {sd}, width = {width}, min = {min}, max = {max}", width = self.width)?;
         writeln!(f, "Legend:")?;
         for (idx, author) in self.authors.iter().enumerate() {
             writeln!(f, "\x1B[{color}m{author}\x1B[0m", color = 92 + idx % 5)?
         }
-        writeln!(f, "{FULL_CHAR} [1x] = {}", (max + self.width / 2) / self.width)?;
         for (idx, quantities) in (self.start_idx..self.data.len()).chain(0..self.start_idx).map(|idx| (idx, &self.data[idx])) {
             writeln!(f, "{label} | {bar}", label = self.labels[idx], bar = generate_progress_bar(self.width, FULL_CHAR, EMPTY_CHAR, max, &quantities, |vec| (&self.sum)(&vec)))?;
         }
