@@ -6,13 +6,16 @@
 
 pub mod data;
 pub mod serde_structs;
-mod ffi;
 
-use crate::data::{dataset_average, dataset_sum, Graph, TimeQuantity};
+use crate::data::{dataset_average, dataset_sum, Graph, TimeQuantity, VariableSizeGraph};
 use crate::serde_structs::{Call, DirectMessages, Message, UninitDirectMessages};
-use crate::ffi::{set_color, set_cursor, stdout_str, get_char, get_console_screen_buffer_info};
 use anyhow::{Context, Result};
-use chrono::{Datelike, NaiveDate, TimeDelta, Timelike, Weekday};
+use chrono::{Datelike, Days, NaiveDate, TimeDelta, Timelike, Weekday};
+use crossterm::cursor::{MoveTo, MoveToNextLine};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::style::{Color, Colors, Print, SetColors};
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType};
+use crossterm::{event, execute};
 use fxhash::FxHashMap;
 use image::{ImageFormat, Pixel, Rgba};
 use itertools::Itertools;
@@ -20,9 +23,9 @@ use num_format::{Locale, ToFormattedString};
 use num_traits::FromPrimitive;
 use std::fmt::Write;
 use std::fs::File;
+use std::io::stdout;
 use std::path::Path;
 use std::time::Instant;
-
 
 fn main() -> Result<()> {
     let Some(path) = std::env::args().nth(1) else {
@@ -30,11 +33,7 @@ fn main() -> Result<()> {
         std::process::exit(0);
     };
 
-    let result = parse_dms(&path);
-
-    result.context("Failed to evalulate DM information")?;
-
-    Ok(())
+    parse_dms(&path).context("Failed to evalulate DM information")
 }
 
 fn parse_dms<P: AsRef<Path>>(path: P) -> Result<()> {
@@ -43,14 +42,19 @@ fn parse_dms<P: AsRef<Path>>(path: P) -> Result<()> {
     let dms: DirectMessages = serde_json::from_slice::<UninitDirectMessages>(&std::fs::read(path)?)?.try_into()?;
     println!("Parsed DMs in {}", TimeQuantity::from(start.elapsed().as_millis() as usize));
 
-    for selection in select_data_calculations() {
+    enable_raw_mode()?;
+    let selections = select_data_calculations()?;
+    disable_raw_mode()?;
+
+    for selection in selections {
         selection(&dms)?
     }
 
-    loop { if get_char() == 3 { return Ok(()) } }
+    enable_raw_mode()?;
+    loop { if let Ok(Event::Key(KeyEvent { code: KeyCode::Char('c'), modifiers: KeyModifiers::CONTROL, .. } | KeyEvent { code: KeyCode::Enter, .. })) = event::read() { disable_raw_mode()?; return Ok(()) } }
 }
 
-fn select_data_calculations() -> Vec<fn(&DirectMessages) -> Result<()>> {
+fn select_data_calculations() -> Result<Vec<fn(&DirectMessages) -> Result<()>>> {
     enum SelectionInput {
         Finish,
         Toggle,
@@ -62,46 +66,51 @@ fn select_data_calculations() -> Vec<fn(&DirectMessages) -> Result<()>> {
         use SelectionInput::*;
 
         loop {
-            let first_byte = get_char();
-            if first_byte == 3 {
-                std::process::exit(1);
-            } else if first_byte == 13 {
-                // enter key
-                return Finish;
-            } else if first_byte == 224 {
-                let second_byte = get_char();
-                match second_byte {
-                    72 => return Up,
-                    77 | 75 => return Toggle,
-                    80 => return Down,
-                    _ => {}
-                }
+            let first_byte = event::read();
+            match first_byte {
+                Ok(Event::Key(KeyEvent { code: KeyCode::Enter, .. })) => return Finish,
+                Ok(Event::Key(KeyEvent { code: KeyCode::Up, .. })) => return Up,
+                Ok(Event::Key(KeyEvent { code: KeyCode::Down, .. })) => return Down,
+                Ok(Event::Key(KeyEvent { code: KeyCode::Left | KeyCode::Right, .. })) => return Toggle,
+                Ok(Event::Key(KeyEvent { code: KeyCode::Char('c'), modifiers: KeyModifiers::CONTROL, .. })) => {
+                    let _ = disable_raw_mode();
+                    std::process::exit(1)
+                },
+                _ => {},
             }
         }
     }
 
-    fn display_line(name: &str, toggled: bool, selected: bool) {
+    fn display_line(name: &str, toggled: bool, selected: bool) -> Result<()> {
         // < Top Call Lengths - DISABLED >
-        let plain_text_color = if selected { 0b_11111000 } else { 0b_00000111 };
+        let plain_text_color = if selected { Colors::new(Color::Black, Color::White) } else { Colors::new(Color::White, Color::Black)};
         let toggle_color = match (toggled, selected) {
-            (false, false) => 0b00000100,
-            (false, true) => 0b11111100,
-            (true, false) => 0b00000010,
-            (true, true) => 0b11111010,
+            (false, false) => Colors::new(Color::Red, Color::Black),
+            (false, true) => Colors::new(Color::Red, Color::White),
+            (true, false) => Colors::new(Color::Green, Color::Black),
+            (true, true) => Colors::new(Color::Green, Color::White),
         };
-        set_color(plain_text_color);
-        stdout_str("< ");
-        stdout_str(name);
-        stdout_str(" - ");
-        set_color(toggle_color);
-        stdout_str(if toggled { "ENABLED" } else { "DISABLED" });
-        set_color(plain_text_color);
-        stdout_str(" >");
-        set_color(0b1111);
-        stdout_str(" ");
+
+        execute!(
+            stdout(),
+            SetColors(plain_text_color),
+            Print("< "),
+            Print(name),
+            Print(" - "),
+            SetColors(toggle_color),
+            Print(if toggled { "ENABLED" } else { "DISABLED" }),
+            SetColors(plain_text_color),
+            Print(" > "),
+            SetColors(Colors::new(Color::Reset, Color::Reset)),
+            MoveToNextLine(1),
+        )?;
+
+        Ok(())
     }
 
     const SELECTIONS: &[(&'static str, fn(&DirectMessages) -> Result<()>)] = &[
+        ("First Message", first_message),
+        ("Texting Frequency (Lifetime Graph; Weekly Buckets)", texting_frequency),
         ("Top Call Lengths", top_call_lengths),
         ("Total Call Lengths", total_call_lengths),
         ("Longest Time Between Messages", longest_time_between_messages),
@@ -119,35 +128,38 @@ fn select_data_calculations() -> Vec<fn(&DirectMessages) -> Result<()>> {
         ("Edited Rates (Annual Buckets)", edit_rates),
     ];
 
-    let lines_already_written = get_console_screen_buffer_info().cursor_pos.y as usize;
+
+    execute!(stdout(), Clear(ClearType::All), MoveTo(0, 0))?;
 
     let mut selected = [false; const { SELECTIONS.len() }];
     let mut selected_line = 0_usize;
 
     for (idx, name, selected) in (0..SELECTIONS.len()).map(|idx| (idx, SELECTIONS[idx].0, selected[idx])) {
-        display_line(name, selected, selected_line == idx);
-        stdout_str("\n");
+        display_line(name, selected, selected_line == idx)?;
     }
 
     loop {
-        set_cursor(0, lines_already_written + selected_line);
+        execute!(stdout(), MoveTo(0, selected_line as u16))?;
         match read_valid_input() {
-            SelectionInput::Finish => return (0..SELECTIONS.len()).filter(|&idx| selected[idx]).map(|idx| SELECTIONS[idx].1).collect::<Vec<_>>(),
+            SelectionInput::Finish => {
+                execute!(stdout(), MoveTo(0, SELECTIONS.len() as u16))?;
+                return Ok((0..SELECTIONS.len()).filter(|&idx| selected[idx]).map(|idx| SELECTIONS[idx].1).collect::<Vec<_>>())
+            },
             SelectionInput::Toggle => {
                 selected[selected_line] = !selected[selected_line];
-                display_line(SELECTIONS[selected_line].0, selected[selected_line], true);
+                display_line(SELECTIONS[selected_line].0, selected[selected_line], true)?;
             },
             SelectionInput::Up => {
-                display_line(SELECTIONS[selected_line].0, selected[selected_line], false);
+                display_line(SELECTIONS[selected_line].0, selected[selected_line], false)?;
                 selected_line = (selected_line + SELECTIONS.len() - 1) % SELECTIONS.len();
-                set_cursor(0, lines_already_written + selected_line);
-                display_line(SELECTIONS[selected_line].0, selected[selected_line], true);
+                execute!(stdout(), MoveTo(0, selected_line as u16))?;
+                display_line(SELECTIONS[selected_line].0, selected[selected_line], true)?;
             },
             SelectionInput::Down => {
-                display_line(SELECTIONS[selected_line].0, selected[selected_line], false);
+                display_line(SELECTIONS[selected_line].0, selected[selected_line], false)?;
                 selected_line = (selected_line + 1) % SELECTIONS.len();
-                set_cursor(0, lines_already_written + selected_line);
-                display_line(SELECTIONS[selected_line].0, selected[selected_line], true);
+                execute!(stdout(), MoveTo(0, selected_line as u16))?;
+                display_line(SELECTIONS[selected_line].0, selected[selected_line], true)?;
             },
         }
     }
@@ -183,6 +195,49 @@ pub fn nth(n: usize) -> String {
         }
     }
     buf
+}
+
+fn first_message(dms: &DirectMessages) -> Result<()> {
+    println!("\n# First Message");
+    let mut first_messages = vec![None; dms.channel.authors.len()];
+
+    for text in dms.messages.iter().filter_map(Message::as_text_message) {
+        let author_idx = dms.channel.authors.iter().position(|author| *author == text.author.name).unwrap();
+        if first_messages[author_idx].is_none() {
+            first_messages[author_idx] = Some(&text.content);
+        }
+    }
+
+    for (author_idx, first_message) in first_messages.into_iter().enumerate() {
+        let author = dms.channel.authors[author_idx];
+        if let Some(first_message) = first_message {
+            println!("{author} = {first_message}");
+        } else {
+            println!("{author} has no messages");
+        }
+    }
+
+    Ok(())
+}
+
+fn texting_frequency(dms: &DirectMessages) -> Result<()> {
+    println!("\n#Texting Frequency (Lifetime Graph; Weekly Buckets)");
+
+    let earliest_message_timestamp = dms.messages.iter().filter_map(Message::as_text_message).map(|text| text.timestamp).min().context("Expected a message")?;
+    let earliest_message_date = NaiveDate::from_yo_opt(earliest_message_timestamp.year(), earliest_message_timestamp.ordinal0() / 7 * 7 + 1).unwrap();
+
+    let mut graph = VariableSizeGraph::new(dms.channel.authors.clone(), 0, |idx| earliest_message_date.checked_add_days(Days::new(idx as u64 * 7)).unwrap().format("Week of %b %d, %Y").to_string(), dataset_sum, 50);
+
+    for text in dms.messages.iter().filter_map(Message::as_text_message) {
+        let date = text.timestamp.date();
+        let delta = date - earliest_message_date;
+        let idx = delta.num_days() as usize / 7;
+        graph.add(text.author.name.as_str(), idx, 1);
+    }
+
+    println!("{graph}");
+
+    Ok(())
 }
 
 fn top_call_lengths(dms: &DirectMessages) -> Result<()> {
@@ -484,7 +539,7 @@ fn call_png(dms: &DirectMessages) -> Result<()> {
     let mut image = image::RgbaImage::from_pixel(width as u32, height as u32, Rgba([0x31, 0x33, 0x38, 0xFF]));
     for x in 0..width {
         print!("Generating bars ({x} / {width}) ({pct:.1}%)...\r", pct = 100.0 * x as f64 / width as f64);
-        std::io::Write::flush(&mut std::io::stdout())?;
+        std::io::Write::flush(&mut stdout())?;
         let quantities_index = (x + 11 * NUM_QUANTITIES / 48) % width;
         let section = &*quantities[quantities_index];
         let heights = (0..section.len()).map(|idx| height - 1 - section.iter().copied().take(idx).map(|x| x / ms_per_px).sum::<usize>()).collect::<Vec<_>>();

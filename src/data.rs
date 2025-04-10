@@ -1,4 +1,5 @@
 use std::fmt::{Debug, Display, Formatter};
+use std::iter;
 use std::iter::Sum;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign};
 use chrono::TimeDelta;
@@ -177,6 +178,68 @@ impl<const SIZE: usize, T: From<usize>, S: Fn(&[T]) -> usize> Display for Graph<
         for (idx, author) in self.authors.iter().enumerate() {
             writeln!(f, "\x1B[{color}m{author}\x1B[0m", color = 92 + idx % 5)?
         }
+        writeln!(f, "{FULL_CHAR} [1x] = {}", (max + self.width / 2) / self.width)?;
+        for (idx, quantities) in (self.start_idx..self.data.len()).chain(0..self.start_idx).map(|idx| (idx, &self.data[idx])) {
+            writeln!(f, "{label} | {bar}", label = self.labels[idx], bar = generate_progress_bar(self.width, FULL_CHAR, EMPTY_CHAR, max, &quantities, |vec| (&self.sum)(&vec)))?;
+        }
+
+        Ok(())
+    }
+}
+
+pub struct VariableSizeGraph<'a, T: From<usize>, S: Fn(&[T]) -> usize, F: Fn(usize) -> String> {
+    label_fn: F,
+    labels: Vec<String>,
+    authors: Box<[&'a str]>,
+    data: Vec<Box<[Vec<T>]>>,
+    start_idx: usize,
+    width: usize,
+    sum: S,
+}
+
+impl<'a, T: From<usize>, S: Fn(&[T]) -> usize, F: Fn(usize) -> String> VariableSizeGraph<'a, T, S, F> {
+    pub fn new(authors: impl Into<Box<[&'a str]>>, start_idx: usize, label_fn: F, sum: S, width: usize) -> Self {
+        let authors = authors.into();
+        Self {
+            label_fn,
+            labels: Vec::new(),
+            data: Vec::new(),
+            start_idx,
+            authors,
+            width,
+            sum,
+        }
+    }
+
+    pub fn add(&mut self, author: &str, idx: usize, quantity: T) -> bool {
+        let Some(author_index) = self.authors.iter().position(|x| *x == author) else { return false };
+        if self.data.len() <= idx {
+            self.data.extend(iter::from_fn(|| Some(Box::<[Vec<T>]>::from_iter(iter::from_fn(|| Some(Vec::new())).take(self.authors.len())))).take(idx + 1 - self.data.len()));
+            let mut label_idx = self.labels.len();
+            self.labels.extend(iter::from_fn(|| {
+                let label = (self.label_fn)(label_idx);
+                label_idx += 1;
+                Some(label)
+            }).take(idx + 1 - self.labels.len()));
+        }
+        let Some(line) = self.data.get_mut(idx) else { return false };
+        line[author_index].push(quantity);
+        true
+    }
+}
+
+impl<'a, T: From<usize>, S: Fn(&[T]) -> usize, F: Fn(usize) -> String> Display for VariableSizeGraph<'a, T, S, F> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        const FULL_CHAR: char = '#';
+        const EMPTY_CHAR: char = '-';
+
+        let max = self.data.iter().map(|line| line.iter().map(|u| (&self.sum)(&u)).sum::<usize>()).max().unwrap_or(0);
+
+        writeln!(f, "Legend:")?;
+        for (idx, author) in self.authors.iter().enumerate() {
+            writeln!(f, "\x1B[{color}m{author}\x1B[0m", color = 92 + idx % 5)?
+        }
+        writeln!(f, "{FULL_CHAR} [1x] = {}", (max + self.width / 2) / self.width)?;
         for (idx, quantities) in (self.start_idx..self.data.len()).chain(0..self.start_idx).map(|idx| (idx, &self.data[idx])) {
             writeln!(f, "{label} | {bar}", label = self.labels[idx], bar = generate_progress_bar(self.width, FULL_CHAR, EMPTY_CHAR, max, &quantities, |vec| (&self.sum)(&vec)))?;
         }
