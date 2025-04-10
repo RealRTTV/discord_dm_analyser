@@ -50,8 +50,7 @@ fn parse_dms<P: AsRef<Path>>(path: P) -> Result<()> {
         selection(&dms)?
     }
 
-    enable_raw_mode()?;
-    loop { if let Ok(Event::Key(KeyEvent { code: KeyCode::Char('c'), modifiers: KeyModifiers::CONTROL, .. } | KeyEvent { code: KeyCode::Enter, .. })) = event::read() { disable_raw_mode()?; return Ok(()) } }
+    loop {  }
 }
 
 fn select_data_calculations() -> Result<Vec<fn(&DirectMessages) -> Result<()>>> {
