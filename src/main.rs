@@ -12,7 +12,7 @@ use crate::serde_structs::{Call, DirectMessages, Message, UninitDirectMessages};
 use anyhow::{Context, Result};
 use chrono::{Datelike, Days, NaiveDate, TimeDelta, Timelike, Weekday};
 use crossterm::cursor::{MoveTo, MoveToNextLine};
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::style::{Color, Colors, Print, SetColors};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType};
 use crossterm::{event, execute};
@@ -68,11 +68,11 @@ fn select_data_calculations() -> Result<Vec<fn(&DirectMessages) -> Result<()>>> 
         loop {
             let first_byte = event::read();
             match first_byte {
-                Ok(Event::Key(KeyEvent { code: KeyCode::Enter, .. })) => return Finish,
-                Ok(Event::Key(KeyEvent { code: KeyCode::Up, .. })) => return Up,
-                Ok(Event::Key(KeyEvent { code: KeyCode::Down, .. })) => return Down,
-                Ok(Event::Key(KeyEvent { code: KeyCode::Left | KeyCode::Right, .. })) => return Toggle,
-                Ok(Event::Key(KeyEvent { code: KeyCode::Char('c'), modifiers: KeyModifiers::CONTROL, .. })) => {
+                Ok(Event::Key(KeyEvent { kind: KeyEventKind::Press, code: KeyCode::Enter, .. })) => return Finish,
+                Ok(Event::Key(KeyEvent { kind: KeyEventKind::Press, code: KeyCode::Up, .. })) => return Up,
+                Ok(Event::Key(KeyEvent { kind: KeyEventKind::Press, code: KeyCode::Down, .. })) => return Down,
+                Ok(Event::Key(KeyEvent { kind: KeyEventKind::Press, code: KeyCode::Left | KeyCode::Right, .. })) => return Toggle,
+                Ok(Event::Key(KeyEvent { kind: KeyEventKind::Press, code: KeyCode::Char('c'), modifiers: KeyModifiers::CONTROL, .. })) => {
                     let _ = disable_raw_mode();
                     std::process::exit(1)
                 },
