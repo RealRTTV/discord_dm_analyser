@@ -367,9 +367,6 @@ fn most_said_words(dms: &DirectMessages) -> Result<String> {
         }
     }
 
-    writeln!(&mut buf, "anyway = {}", map["anyway"])?;
-    writeln!(&mut buf, "fun = {}", map["fun"])?;
-
     let mut map = map.into_iter().collect::<Vec<_>>();
     map.sort_by_key(|(_, b)| usize::MAX - *b);
     for (idx, (word, count)) in map.into_iter().take(100).enumerate() {
