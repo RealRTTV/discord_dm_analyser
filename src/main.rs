@@ -182,7 +182,7 @@ pub fn generate_progress_bar<T, S: Fn(&T) -> usize>(width: usize, full_char: cha
         let _ = write!(&mut buf, "\x1B[{color}m", color = 92 + idx);
         let _ = buf.write_str(&full_char.to_string().repeat(width * quantity / max));
         current_quantity += width * quantity / max;
-        let _ = write!(&mut buf, "​\x1B[0m");
+        let _ = write!(&mut buf, "\x1B[0m");
     }
     let _ = buf.write_str(&empty_char.to_string().repeat(width.saturating_sub(current_quantity)));
     let _ = buf.write_char(']');
