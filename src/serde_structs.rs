@@ -84,7 +84,7 @@ pub enum Message {
     AddRecipient(AddRecipient),
     #[serde(rename = "RecipientRemove")]
     RemoveRecipient(RemoveRecipient),
-    #[serde(rename = "35", alias = "20", alias = "23", alias = "ChannelIconChange")]
+    #[serde(rename = "35", alias = "20", alias = "23", alias = "ChannelIconChange", alias = "ChannelNameChange")]
     Misc(Value),
 }
 
