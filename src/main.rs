@@ -54,8 +54,10 @@ fn parse_dms<P: AsRef<Path>>(path: P) -> Result<()> {
     }
 
     println!("{buf}");
+    clipboard_rs::ClipboardContext::new().ok().context("Could not create clipboard")?.set_text(buf.clone()).ok().context("Failed to set clipboard content")?;
     println!("Copied to clipboard!");
-    clipboard_rs::ClipboardContext::new().ok().context("Could not create clipboard")?.set_text(buf).ok().context("Failed to set clipboard content")?;
+    std::fs::write("discord_dm_analysis.txt", buf)?;
+    println!("Written to 'discord_dm_analysis.txt'!");
 
     loop {}
 }
