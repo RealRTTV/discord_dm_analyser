@@ -189,7 +189,7 @@ impl<T: From<usize>, S: Fn(&[T]) -> usize, F: Fn(usize) -> String> Display for G
         let mean = sum as f64 / self.data.len() as f64;
         let sd = standard_deviation(sum, self.data.iter().map(|line| line.iter().map(|u| (&self.sum)(&u)).sum::<usize>()), self.data.len());
 
-        writeln!(f, "Graph Data: mean = {mean}, sd = {sd}, width = {width}, min = {min}, max = {max}", width = self.width)?;
+        writeln!(f, "Graph Data: sum = {sum}, mean = {mean}, sd = {sd}, width = {width}, min = {min}, max = {max}", width = self.width)?;
         writeln!(f, "Legend:")?;
         for (idx, author) in self.authors.iter().enumerate() {
             writeln!(f, "\x1B[{color}m{author}\x1B[0m", color = 92 + idx % 5)?
